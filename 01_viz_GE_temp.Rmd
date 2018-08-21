@@ -1,0 +1,363 @@
+---
+title: "Genève chauffe? 154 années de données climatiques en graphiques"
+author: "Duc-Quang Nguyen | Tribune de Genève | Tamedia"
+date: " 2018"
+output: 
+  html_document:
+    code_folding: hide
+    echo: TRUE
+    warning: FALSE
+    message: FALSE
+    toc: yes
+    toc_depth: 3
+    toc_float: true
+    theme: simplex
+---
+## Snippets
+
+>MétéoSuisse a enregistré le sixième mois de juillet le plus chaud depuis le début des mesures en 1864. [meteosuisse](https://www.meteosuisse.admin.ch/home/actualite/infos.subpage.html/fr/data/news/2018/7/canicule-le-temps-tres-chaud-et-lourd-se-poursuit.html)
+
+## Related
+
+* [538 global warming](https://fivethirtyeight.com/features/its-so-freaking-hot-now-what/)
+* [DE](https://interaktiv.waz.de/rekordsommer-2018/)
+* [SWI](https://www.swissinfo.ch/eng/business/just-how-hot-_explore-150-years-of-global-warming-data-in-switzerland/43279510)
+
+```{r setup, include=FALSE}
+download_meteoSuisseData <- F
+cleanOutput <- F
+
+require(lintr)
+require(here)
+
+library(tidyverse)
+library(magrittr)
+library(stringr)
+library(knitr)
+library(tamMap)
+library(hrbrthemes)
+library(tamTheme)
+library(gganimate)
+### Getting data in packages
+
+library(ggalt)
+library(viridis)
+### Interactive 
+library(ggiraph)
+library(htmltools)
+library(swiRcharts)
+library(rCharts)
+library(highcharter)
+
+### Misc stuff
+#require(classInt)
+#require(viridis)
+```
+
+```{r data download}
+  input.url <- 'https://www.meteosuisse.admin.ch/product/output/climate-data/homogenous-monthly-data-processing/data/homog_mo_GVE.txt'
+  rawData.file <- paste0("data/", basename(input.url))
+if(download_meteoSuisseData) {
+  download.file(input.url, destfile = rawData.file)  
+}
+  # Read each txt file and save it as CSV
+  header <- read.table(rawData.file, skip = 27, stringsAsFactors = FALSE, 
+                       nrows = 1) %>% unlist(use.names = F)
+  
+  table <- read.table(rawData.file, skip = 28, stringsAsFactors = FALSE)
+  colnames(table) <- header  
+#skim(table)
+```
+
+```{r wrangle}
+months <- structure(1:12, names = c('Jan.', 'Fév.',	'Mars',	'Avr.',	'Mai',	'Juin',	'Juil.',	'Août',	'Sept.',	'Oct.',	'Nov.',	'Déc.'))
+years_average <-  c(1981, 2010)
+
+table %<>% mutate(
+  Month = factor(names(months)[match(Month, months)], 
+                 levels = names(months)),
+)
+
+yAverage <- table %>% 
+  group_by(Year) %>% 
+  summarise(yAverage = mean(Temperature)) %>% 
+  ungroup()
+
+table <- left_join(table,yAverage)
+
+ylim <- table %>% .$Temperature %>% range()
+```
+
+```{r helper viz}
+bg_chart <- function(base_size = 22) {
+  ggplot() +
+    geom_hline(yintercept = 0, colour = "darkgrey", alpha = 0.6, size = 1) + 
+  scale_x_discrete(name = "", position = "top", expand = c(0.02, 0.1)) +
+  scale_y_continuous(
+    name = "", expand = c(0.01, 0), 
+    labels = function(x) paste0(x,'°'), limits = ylim, 
+    breaks = scales::pretty_breaks(n = 5)
+  ) +
+  theme_tam(xGridLines = T, base_size = base_size) +
+  theme(
+    axis.ticks.y = element_blank(),
+    panel.background = element_blank(),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.grid.major.y =  element_line(
+      color = "#c2c4d6", linetype = "dotted", size = 1),
+    plot.margin = margin(-6, 3, 0, -2, "pt"),
+    axis.line = element_blank()
+  )
+  #scale_colour_gradientn(colours = brewer.pal(7,"Reds"))
+}
+```
+
+```{r viz}
+bg_chart () + 
+    geom_xspline(data = table %>% filter(Year < 2018),
+                 aes(x = Month, y = Temperature, group = Year, colour = Year), size = 0.1) +
+      geom_xspline(data = table %>% filter(Year == 2018),
+                 aes(x = Month, y = Temperature, group = Year, colour = Year), size = 1)
+```
+
+
+
+```{r whole animation}
+fontSize <- 50
+syear <- 2010
+
+mAverageByP <- df %>% 
+  filter(Year >= 1981 & Year <= 2010) %>% 
+  group_by(Month) %>% 
+  summarise(monthlyAv = mean(Temperature))  %>% 
+  ungroup()
+
+
+col.brk <- seq(
+  min(df$yAverage, na.rm = T) - 0.001, 
+  max(df$yAverage, na.rm = T) + 0.001, 
+  length.out = length(unique(df$Year)))
+colours <- viridis_pal(option = "A", direction = -1)(length(col.brk))
+
+dff <- df %>% mutate(
+  # add the last colour for NA y.average, unfinished years
+  colour = colours[as.numeric(cut(yAverage, breaks = col.brk))]
+)
+
+yearLabel <- dff %>% 
+      select(Year, yAverage, colour) %>% 
+      distinct() %>% 
+      mutate(
+        x = 7.15, 
+        y = 9
+      )
+
+topYears <- dff %>% 
+  select(Year, yAverage) %>% 
+  distinct() %>% 
+  arrange(desc(yAverage)) %>% 
+  head(10) %>% .$Year
+
+
+plotSingleYear <- function(syear) {
+  p <- bg_chart (base_size = fontSize) + 
+    geom_xspline(
+      data = dff %>% filter(Year < syear),
+      aes(x = Month, y = Temperature, group = Year, colour = colour), 
+      size = 0.2, alpha  = 0.7
+    ) +  
+    geom_line(
+      data = mAverageByP,
+      aes(x = Month, y = monthlyAv, group = 1), 
+      size = 2.2, alpha  = 0.7, linetype = "dashed",
+    ) +
+    geom_xspline(
+      data = dff %>% filter(Year == syear),
+      aes(x = Month, y = Temperature, group = Year, colour = colour), 
+      size = 3, alpha  = 1
+    ) +
+  geom_text(
+    data = yearLabel %>% filter(Year == syear),
+    aes(x = x, y = y, label = Year, colour = colour),
+    family = font_tw_bold, hjust = 0.5, size = fontSize * 1.3, 
+    alpha = 0.9
+  ) +
+  theme(
+    plot.margin = margin(20, 3, 0, -2, "pt"), 
+    plot.title = element_text(
+      size = fontSize / 1.1, colour = "#242d75"),
+    plot.subtitle = element_text(size = fontSize / 1.2)
+  ) +
+  scale_colour_identity() +
+  labs(
+    title = "154 années de température à Genève, 1864 - 2018",
+    subtitle = "La courbe courbe pointillée correspond à la moyenne mensuelle de 1981 à 2010.\nL'animation ralentit pour les 10 années les plus chaudes"
+  )
+}
+
+plots <- unique(df$Year) %>% map(~ plotSingleYear(.x))
+names(plots) <- unique(df$Year)
+
+animation::saveVideo({
+  for( y in names(plots) %>% tail()) {
+    cat("\n", y)
+    print(plots[[y]])  
+    if(y %in% topYears) {
+      print(plots[[y]])
+      print(plots[[y]])
+      print(plots[[y]])
+      print(plots[[y]])
+      print(plots[[y]])
+      print(plots[[y]])
+    }
+  }
+    }, video.name = "all_year.mp4",
+  interval = 0.2,
+  ani.width = 620 * 2.5, ani.height = 680 * 2.5
+)
+
+
+
+
+```
+
+
+```{r shift 1864-1964 vs after}
+bluered <- c("#2C3891", '#ae0404')
+fontSize <- 50
+
+
+df <- table %>% mutate(
+  timeP = factor(ifelse(Year <= 1964, "1864-1964", "1965-2018")),
+  colour = ifelse(timeP == "1864-1964", bluered[1], bluered[2])
+)
+mAverageByP <- df %>% 
+  group_by(timeP, Month) %>% 
+  summarise(monthlyPAv = mean(Temperature)) %>% 
+  ungroup() %>% 
+  mutate(colour = ifelse(timeP == "1864-1964", bluered[1], bluered[2]))
+
+shift <- mAverageByP %>% 
+  group_by(Month) %>% 
+  summarise(y0 = monthlyPAv[1], y1 = monthlyPAv[2]) %>% 
+  ungroup() %>% 
+  mutate(timeP = factor("1965-2018", levels = c("1864-1964", "1965-2018")))
+
+shift <- rbind(shift %>% 
+  mutate(y1 = y0, timeP = "1864-1964"), shift) %>% 
+  mutate(timeP = as.factor(timeP))
+
+shiftLabel <- shift %>% 
+  mutate(
+    diff = y1 - y0,
+    label = ifelse(
+      diff == 0, "", paste0("+", formatC(diff, digits = 2), "°"))
+    )
+
+timePLabel <- tibble(
+  x = 7.15, y = 8.4, label = levels(df$timeP), 
+  timeP = factor(levels(df$timeP))) %>% 
+  mutate(colour = ifelse(timeP == "1864-1964", bluered[1], bluered[2]))
+
+moyenneMLabel <- cbind(
+  tibble(
+    x = 7.15, y = 4.4, 
+    label = paste0("moyenne de ", levels(df$timeP))),
+  mAverageByP %>% filter(Month == "Mars")
+)
+
+p <- bg_chart (base_size = fontSize) + 
+  scale_colour_identity() +
+  geom_segment(
+    data = shift,
+    aes(x = Month, xend = Month, y = y0, yend = y1), 
+    size = fontSize / 2.5, colour = "#b30047", alpha = 0.8
+  ) +
+  geom_xspline(
+    data = df,
+    aes(x = Month, y = Temperature, group = Year, colour = colour), 
+    size = 0.1, alpha  = 0.9
+  ) +
+  geom_line(
+    data = mAverageByP,
+    aes(x = Month, y = monthlyPAv, group = 1, colour = colour),
+    size = fontSize / 18, linetype = "dashed"
+  ) +
+  geom_text(
+    data = shiftLabel, hjust = 0.5, vjust = 0, nudge_y = 0.15,
+    aes(x = Month, y = y1, label = label), 
+    size = fontSize / 3, colour = "#660000", family = font_tw_light
+  ) +
+  geom_text(
+    data = timePLabel, 
+    aes(x = x, y = y, label = label, colour = colour),
+    family = font_tw_bold, hjust = 0.5, size = fontSize * 1.1, 
+    alpha = 0.9
+  ) +
+  geom_text(
+    data = moyenneMLabel, aes(x = x, y = y, label = label),
+    family = font_tw, hjust = 0.5, size = fontSize / 3,
+    vjust = -0.9, colour = "#666666"
+  ) +
+  geom_curve(
+    data = moyenneMLabel, size = fontSize / 20, 
+    colour = "#666666", alpha = 0.7,
+    aes(x = x, y = y, xend = Month, yend = monthlyPAv), 
+    curvature = -0.8,  arrow = arrow(length = unit(0.01, "npc"))
+  )
+    
+
+p + labs(title = "sadfasf", subtitle = "Températures mensuelles moyennes de 1864 à août 2018 à Genève.\nChaque année est représentée par une courbe") +
+  facet_wrap(~timeP)
+
+
+ap <- p + 
+  labs(title = "", subtitle = "") + transition_states(timeP, transition_length = 300, state_length = 400, wrap = T) +
+  enter_fade() +
+  exit_fade()
+
+# apa <- animate(ap, width = 620 * 1.1, height = 700 * 1.1)
+# anim_save("GE_temperatureAverageShift.gif")
+
+
+#vid <- animate(ap,renderer = ffmpeg_renderer())
+vid <- animate(ap, width = 620 * 3, height = 680 * 3, fps = 600, 
+               renderer = ffmpeg_renderer(
+                 options = list(pix_fmt = "yuv420p", loop = 0))
+                 )
+vid %>% save_animation(file = "test6.mp4")
+
+
+# 
+# 
+# spr <- animate(p, renderer = sprite_renderer()) 
+# save_animation(spr, "test.html")
+# 
+# sprite_file("sprite_test", fps=2, width = 620, height = 800, 6000)
+
+
+```
+
+```{r move production graphics}
+if (cleanOutput) {
+  files <- c("basename_.*html", "js")
+
+  if (!dir.exists("output/bak")) {
+    dir.create("output/bak")
+  } else {
+    list.files("output/bak/", full.names = T, recursive = T) %>% file.remove()
+  }
+  ori.files <- list.files("output", full.names = T)[list.files("output") != "bak"]
+  file.copy(ori.files, to = "output/bak/", recursive = T)
+  unlink(ori.files, recursive = T)
+
+  files_tomove <- lapply(files, function(x) list.files(pattern = x)) %>% unlist()
+  file.copy(files_tomove, "output", recursive = T)
+  unlink(files_tomove, recursive = T)
+}
+```
+
+```{r linting}
+lintr::lint(knitr::current_input())
+```
