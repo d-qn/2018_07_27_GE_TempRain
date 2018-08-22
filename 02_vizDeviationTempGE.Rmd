@@ -1,0 +1,144 @@
+---
+title: ""
+author: "Duc-Quang Nguyen | Tribune de Genève | Tamedia"
+date: " 2018"
+output: 
+  html_document:
+    code_folding: hide
+    echo: TRUE
+    warning: FALSE
+    message: FALSE
+    toc: yes
+    toc_depth: 3
+    toc_float: true
+    theme: simplex
+---
+
+```{r setup, include=FALSE}
+cleanOutput <- F
+
+require(lintr)
+require(here)
+
+library(tidyverse)
+library(magrittr)
+library(stringr)
+library(knitr)
+library(tamMap)
+library(hrbrthemes)
+library(tamTheme)
+library(gganimate)
+### Getting data in packages
+
+library(ggalt)
+library(viridis)
+### Interactive 
+library(ggiraph)
+library(htmltools)
+library(swiRcharts)
+library(rCharts)
+library(highcharter)
+```
+
+
+```{r move production graphics}
+if (cleanOutput) {
+  files <- c("basename_.*html", "js")
+
+  if (!dir.exists("output/bak")) {
+    dir.create("output/bak")
+  } else {
+    list.files("output/bak/", full.names = T, recursive = T) %>% file.remove()
+  }
+  ori.files <- list.files("output", full.names = T)[list.files("output") != "bak"]
+  file.copy(ori.files, to = "output/bak/", recursive = T)
+  unlink(ori.files, recursive = T)
+
+  files_tomove <- lapply(files, function(x) list.files(pattern = x)) %>% unlist()
+  file.copy(files_tomove, "output", recursive = T)
+  unlink(files_tomove, recursive = T)
+}
+```
+
+
+```{r data load & wrangle}
+  input.url <- 'https://www.meteosuisse.admin.ch/product/output/climate-data/homogenous-monthly-data-processing/data/homog_mo_GVE.txt'
+  rawData.file <- paste0("data/", basename(input.url))
+
+  
+  # Read each txt file and save it as CSV
+  header <- read.table(rawData.file, skip = 27, stringsAsFactors = FALSE, 
+                       nrows = 1) %>% unlist(use.names = F)
+  
+  table <- read.table(rawData.file, skip = 28, stringsAsFactors = FALSE)
+  colnames(table) <- header  
+#skim(table)
+
+months <- structure(1:12, names = c('Jan.', 'Fév.',	'Mars',	'Avr.',	'Mai',	'Juin',	'Juil.',	'Août',	'Sept.',	'Oct.',	'Nov.',	'Déc.'))
+years_average <-  c(1981, 2010)
+
+table %<>% mutate(
+  Month = factor(names(months)[match(Month, months)], 
+                 levels = names(months)),
+)
+yAverage <- table %>% 
+  group_by(Year) %>% 
+  summarise(yAverage = mean(Temperature)) %>% 
+  ungroup()
+
+table <- left_join(table,yAverage)
+
+ylim <- table %>% .$Temperature %>% range()
+```
+
+Voir ce [graphique](https://www.meteosuisse.admin.ch/home/climat/changement-climatique-suisse.html)
+
+```{r deviation from average}
+# deviation depuis la moyenne
+yAv <- table %>% 
+  select(Year, yAverage) %>% 
+  distinct()
+
+pAverage <- yAv %>% 
+  filter(Year >= 1864 & Year <= 1900) %>% 
+  summarise(pAverage = mean(yAverage)) %>% 
+  ungroup() %>% unlist(use.names = F)
+
+yAv %<>% mutate(
+  pAverage = pAverage,
+  devAverage = yAverage - pAverage
+)
+
+# same but summer only July and Aug
+summer_ja <- table %>% 
+  filter(Month %in% c('Juil.', 'Août')) %>% 
+  group_by(Year) %>% 
+  summarise(jaAv = mean(Temperature)) %>% 
+  ungroup()
+
+spAverage <- summer_ja %>% 
+  filter(Year >= 1864 & Year <= 1900) %>% 
+  summarise(spAverage = mean(jaAv)) %>% 
+  ungroup() %>% unlist(use.names = F)
+
+summer_ja %<>% mutate(
+  spAverage = spAverage,
+  devAverage = jaAv - spAverage
+)
+
+
+
+yAv %>% 
+  ggplot(aes(x = Year, y = devAverage)) +
+  geom_col() +
+  theme_tam()
+
+
+  
+
+```
+
+
+```{r linting}
+lintr::lint(knitr::current_input())
+```
